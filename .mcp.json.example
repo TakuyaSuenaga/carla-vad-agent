@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_TOKEN}"
+      }
+    },
+    "remote-orchestrator": {
+      "type": "streamable-http",
+      "url": "${REMOTE_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "carla-local": {
+      "command": "python",
+      "args": ["/opt/mcp/mcp_carla_server.py"],
+      "env": {
+        "CARLA_HOST": "localhost",
+        "CARLA_PORT": "2000"
+      }
+    }
+  }
+}

@@ -1,0 +1,151 @@
+name: CARLA VAD Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      map_name:
+        description: 'CARLA Map Name'
+        required: true
+        default: 'Town05'
+        type: choice
+        options:
+          - Town01
+          - Town02
+          - Town03
+          - Town04
+          - Town05
+          - Town06
+          - Town07
+          - Town10HD
+          - Town11
+          - Town12
+      weather:
+        description: 'Weather Preset'
+        required: true
+        default: 'ClearNoon'
+        type: choice
+        options:
+          - ClearNoon
+          - CloudyNoon
+          - WetNoon
+          - HardRainNoon
+          - ClearSunset
+      duration:
+        description: 'Simulation Duration (seconds)'
+        required: true
+        default: '60'
+        type: number
+
+jobs:
+  run-carla-simulation:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Claude Code CLI
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+      
+      - name: Configure MCP
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REMOTE_MCP_URL: ${{ secrets.REMOTE_MCP_URL }}
+          MCP_API_TOKEN: ${{ secrets.MCP_API_TOKEN }}
+        run: |
+          mkdir -p ~/.claude
+          
+          # 環境変数を.mcp.jsonに展開
+          envsubst < .mcp.json.example > ~/.claude/.mcp.json
+          
+          echo "MCP configuration created"
+          cat ~/.claude/.mcp.json
+      
+      - name: Run CARLA Simulation via Claude Agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          CARLA_AGENT_ID: ${{ secrets.CARLA_AGENT_ID }}
+          CARLA_AGENT_ALIAS_ID: ${{ secrets.CARLA_AGENT_ALIAS_ID }}
+        run: |
+          TASK_DESCRIPTION="自動運転評価タスク: ${{ github.event.inputs.map_name }}マップで${{ github.event.inputs.duration }}秒間のVAD推論を実行し、以下を測定:
+          1. FPS（フレームレート）
+          2. Planning L2エラー
+          3. 衝突率
+          4. マップmAP
+          
+          結果はJSON形式で artifacts/carla_results.json に保存してください。"
+          
+          claude -p "invoke_carla_agent ツールを使用して以下のタスクを実行してください: $TASK_DESCRIPTION" \
+            --allowedTools "mcp__remote-orchestrator__invoke_carla_agent" \
+            --output-format json > results.json
+          
+          # 結果の確認
+          if [ -f results.json ]; then
+            echo "Simulation completed successfully"
+            cat results.json | jq '.'
+          else
+            echo "ERROR: No results file generated"
+            exit 1
+          fi
+      
+      - name: Create artifacts directory
+        run: mkdir -p artifacts
+      
+      - name: Extract metrics from results
+        run: |
+          # results.jsonからメトリクスを抽出してartifactsに保存
+          if [ -f results.json ]; then
+            jq '{
+              map: "${{ github.event.inputs.map_name }}",
+              weather: "${{ github.event.inputs.weather }}",
+              duration: ${{ github.event.inputs.duration }},
+              timestamp: now | strftime("%Y-%m-%d %H:%M:%S"),
+              results: .
+            }' results.json > artifacts/carla_results.json
+          fi
+      
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: carla-vad-results-${{ github.run_number }}
+          path: |
+            results.json
+            artifacts/carla_results.json
+          retention-days: 30
+      
+      - name: Create Issue on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'CARLA Simulation Failed: ${{ github.event.inputs.map_name }}',
+              body: `## Simulation Failure Report
+              
+              **Map**: ${{ github.event.inputs.map_name }}
+              **Weather**: ${{ github.event.inputs.weather }}
+              **Duration**: ${{ github.event.inputs.duration }}s
+              **Workflow Run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              
+              Please check the workflow logs for details.`,
+              labels: ['carla', 'simulation', 'failure']
+            })
+      
+      - name: Comment on Success
+        if: success()
+        run: |
+          echo "✅ CARLA simulation completed successfully"
+          echo "📊 Map: ${{ github.event.inputs.map_name }}"
+          echo "🌤️ Weather: ${{ github.event.inputs.weather }}"
+          echo "⏱️ Duration: ${{ github.event.inputs.duration }}s"
+          echo "📁 Results saved to artifacts"

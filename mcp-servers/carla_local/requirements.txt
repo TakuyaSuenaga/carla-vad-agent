@@ -1,0 +1,7 @@
+mcp>=1.0.0
+carla==0.9.15
+torch==1.9.1
+mmcv-full==1.4.0
+mmdet==2.14.0
+mmdet3d==0.17.1
+nuscenes-devkit==1.1.9

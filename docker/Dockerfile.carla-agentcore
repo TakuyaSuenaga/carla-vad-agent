@@ -1,0 +1,65 @@
+FROM carlasim/carla:0.9.15 as carla-base
+
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+
+# システムパッケージのインストール
+RUN apt-get update && apt-get install -y \
+    python3.8 \
+    python3-pip \
+    git \
+    wget \
+    curl \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# CARLAバイナリのコピー
+COPY --from=carla-base /home/carla/CarlaUE4 /opt/carla/
+
+# Python環境のセットアップ
+RUN pip3 install --no-cache-dir \
+    torch==1.9.1+cu111 \
+    torchvision==0.10.1+cu111 \
+    -f https://download.pytorch.org/whl/torch_stable.html
+
+# VAD環境のインストール
+RUN pip3 install --no-cache-dir \
+    mmcv-full==1.4.0 \
+    mmdet==2.14.0 \
+    mmdet3d==0.17.1 \
+    mmsegmentation==0.14.1 \
+    nuscenes-devkit==1.1.9
+
+# Anthropic SDK & MCP
+RUN pip3 install --no-cache-dir \
+    anthropic \
+    anthropic-bedrock \
+    boto3 \
+    mcp
+
+# CARLAクライアントライブラリ
+RUN pip3 install --no-cache-dir carla==0.9.15
+
+# VADコードのコピー (ビルド時にホストから提供)
+COPY vad_code /opt/vad
+
+# MCPサーバーのコピー
+COPY mcp-servers/carla_local/mcp_carla_server.py /opt/mcp/
+COPY agent-core/start_agentcore.py /opt/
+
+# 作業ディレクトリ
+WORKDIR /opt
+
+# ポート公開
+EXPOSE 2000 2001 2002
+
+# 環境変数
+ENV CARLA_ROOT=/opt/carla
+ENV VAD_ROOT=/opt/vad
+ENV PYTHONPATH="${PYTHONPATH}:/opt/carla/PythonAPI/carla:/opt/vad"
+
+# ヘルスチェック
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD python3 -c "import carla; client = carla.Client('localhost', 2000); client.set_timeout(2.0); client.get_server_version()" || exit 1
+
+# エントリーポイント
+CMD ["python3", "/opt/start_agentcore.py"]

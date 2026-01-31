@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  carla-server:
+    image: carlasim/carla:0.9.15
+    container_name: carla-server
+    runtime: nvidia
+    network_mode: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    command: bash CarlaUE4.sh -RenderOffScreen -nosound -carla-rpc-port=2000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "timeout", "5", "bash", "-c", "echo > /dev/tcp/localhost/2000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  carla-agentcore:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.carla-agentcore
+    container_name: carla-agentcore
+    runtime: nvidia
+    network_mode: host
+    depends_on:
+      carla-server:
+        condition: service_healthy
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - CARLA_AGENT_ID=${CARLA_AGENT_ID}
+      - CARLA_AGENT_ALIAS_ID=${CARLA_AGENT_ALIAS_ID}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ../mcp-servers/carla_local:/opt/mcp
+      - ../agent-core:/opt/agent
+      - carla-data:/data
+      - carla-logs:/var/log/carla
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  carla-data:
+    driver: local
+  carla-logs:
+    driver: local

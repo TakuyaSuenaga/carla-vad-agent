@@ -1,0 +1,59 @@
+# MCP設定 (機密情報を含む)
+.mcp.json
+mcp.json
+
+# 環境変数ファイル
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# AWS
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CARLA/VAD データ
+data/
+checkpoints/
+logs/
+results/
+*.mp4
+*.avi
+
+# 一時ファイル
+tmp/
+temp/
+*.tmp
