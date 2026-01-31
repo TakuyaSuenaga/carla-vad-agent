@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CARLA-VAD Agent: IAM Roles and Policies'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: carla-vad
+    Description: Project name prefix for resource naming
+
+  AnthropicModel:
+    Type: String
+    Default: anthropic.claude-sonnet-4-5-v2:0
+    Description: Anthropic model ID for Bedrock
+    AllowedValues:
+      - anthropic.claude-sonnet-4-5-v2:0
+      - anthropic.claude-sonnet-3-5-v2:0
+      - anthropic.claude-opus-4-5-v1:0
+
+  LambdaFunctionArn:
+    Type: String
+    Description: ARN of the Lambda function (can be provided later or use placeholder)
+    Default: arn:aws:lambda:*:*:function:carla-mcp-bridge
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Project Configuration
+        Parameters:
+          - ProjectName
+      - Label:
+          default: Bedrock Configuration
+        Parameters:
+          - AnthropicModel
+      - Label:
+          default: Lambda Configuration
+        Parameters:
+          - LambdaFunctionArn
+
+Resources:
+  # IAM Role for Bedrock Agent
+  BedrockAgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-bedrock-agent-role
+      Description: IAM role for CARLA Bedrock Agent
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-bedrock-agent-role
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Policy for Bedrock Agent to invoke Claude model
+  BedrockAgentModelPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${ProjectName}-bedrock-model-invoke-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${AnthropicModel}
+      Roles:
+        - !Ref BedrockAgentRole
+
+  # Policy for Bedrock Agent to invoke Lambda
+  BedrockAgentLambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${ProjectName}-bedrock-lambda-invoke-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource:
+              - !Ref LambdaFunctionArn
+      Roles:
+        - !Ref BedrockAgentRole
+
+  # IAM Role for Lambda Functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-lambda-execution-role
+      Description: IAM role for Lambda functions
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-lambda-execution-role
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Policy for Lambda to call EC2 (health checks, etc.)
+  LambdaEC2AccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${ProjectName}-lambda-ec2-access-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - ec2:DescribeInstanceStatus
+            Resource: '*'
+      Roles:
+        - !Ref LambdaExecutionRole
+
+  # IAM Role for EC2 Instance (optional, for AWS CLI access, CloudWatch logs, etc.)
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-ec2-instance-role
+      Description: IAM role for CARLA EC2 instance
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-ec2-instance-role
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # EC2 Instance Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${ProjectName}-ec2-instance-profile
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # Policy for EC2 to access S3 (for storing simulation results)
+  EC2S3AccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${ProjectName}-ec2-s3-access-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::${ProjectName}-simulation-results/*
+              - !Sub arn:aws:s3:::${ProjectName}-simulation-results
+      Roles:
+        - !Ref EC2InstanceRole
+
+Outputs:
+  BedrockAgentRoleArn:
+    Description: ARN of the Bedrock Agent IAM Role
+    Value: !GetAtt BedrockAgentRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-BedrockAgentRoleArn
+
+  LambdaExecutionRoleArn:
+    Description: ARN of the Lambda Execution IAM Role
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaExecutionRoleArn
+
+  EC2InstanceProfileArn:
+    Description: ARN of the EC2 Instance Profile
+    Value: !GetAtt EC2InstanceProfile.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-EC2InstanceProfileArn
+
+  EC2InstanceProfileName:
+    Description: Name of the EC2 Instance Profile
+    Value: !Ref EC2InstanceProfile
+    Export:
+      Name: !Sub ${AWS::StackName}-EC2InstanceProfileName
+
+  BedrockAgentRoleName:
+    Description: Name of the Bedrock Agent IAM Role
+    Value: !Ref BedrockAgentRole
+    Export:
+      Name: !Sub ${AWS::StackName}-BedrockAgentRoleName

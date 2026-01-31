@@ -26,6 +26,12 @@ build/
 *.tfstate.backup
 .terraform.lock.hcl
 
+# CloudFormation
+cloudformation/parameters.json
+cloudformation/outputs.json
+cloudformation/lambda-code/lambda-mcp-bridge.zip
+cloudformation/lambda-code/package/
+
 # Docker
 *.log
 docker-compose.override.yml

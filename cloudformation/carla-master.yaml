@@ -1,0 +1,266 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CARLA-VAD Agent: Master Stack (deploys all components)'
+
+Parameters:
+  # Project Configuration
+  ProjectName:
+    Type: String
+    Default: carla-vad
+    Description: Project name prefix for all resources
+
+  # Network Parameters
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+
+  AllowedSshCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR block allowed to SSH to EC2 (restrict in production)
+
+  # EC2 Parameters
+  InstanceType:
+    Type: String
+    Default: g5.xlarge
+    Description: EC2 instance type (GPU required)
+    AllowedValues:
+      - g4dn.xlarge
+      - g4dn.2xlarge
+      - g5.xlarge
+      - g5.2xlarge
+      - g5.4xlarge
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+
+  # Bedrock Parameters
+  AnthropicModel:
+    Type: String
+    Default: anthropic.claude-sonnet-4-5-v2:0
+    Description: Anthropic model for Bedrock Agent
+    AllowedValues:
+      - anthropic.claude-sonnet-4-5-v2:0
+      - anthropic.claude-sonnet-3-5-v2:0
+      - anthropic.claude-opus-4-5-v1:0
+
+  # S3 Configuration (for CloudFormation templates and Lambda code)
+  TemplateS3Bucket:
+    Type: String
+    Description: S3 bucket containing CloudFormation templates
+    Default: ''
+
+  TemplateS3Prefix:
+    Type: String
+    Description: S3 prefix for CloudFormation templates
+    Default: cloudformation/
+
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment package
+    Default: ''
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Project Configuration
+        Parameters:
+          - ProjectName
+      - Label:
+          default: Network Configuration
+        Parameters:
+          - VpcCidr
+          - AllowedSshCidr
+      - Label:
+          default: EC2 Configuration
+        Parameters:
+          - InstanceType
+          - KeyName
+      - Label:
+          default: Bedrock Configuration
+        Parameters:
+          - AnthropicModel
+      - Label:
+          default: S3 Configuration
+        Parameters:
+          - TemplateS3Bucket
+          - TemplateS3Prefix
+          - LambdaS3Bucket
+
+Conditions:
+  UseS3Templates: !Not [!Equals [!Ref TemplateS3Bucket, '']]
+
+Resources:
+  # Network Stack
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !If
+        - UseS3Templates
+        - !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}carla-network.yaml
+        - !Sub https://s3.${AWS::Region}.amazonaws.com/${ProjectName}-cfn-templates/carla-network.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        VpcCidr: !Ref VpcCidr
+        AllowedSshCidr: !Ref AllowedSshCidr
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-network-stack
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # IAM Stack
+  IAMStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !If
+        - UseS3Templates
+        - !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}carla-iam.yaml
+        - !Sub https://s3.${AWS::Region}.amazonaws.com/${ProjectName}-cfn-templates/carla-iam.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        AnthropicModel: !Ref AnthropicModel
+        LambdaFunctionArn: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-mcp-bridge
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-iam-stack
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Compute Stack
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - NetworkStack
+      - IAMStack
+    Properties:
+      TemplateURL: !If
+        - UseS3Templates
+        - !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}carla-compute.yaml
+        - !Sub https://s3.${AWS::Region}.amazonaws.com/${ProjectName}-cfn-templates/carla-compute.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        NetworkStackName: !GetAtt NetworkStack.Outputs.StackName
+        IAMStackName: !GetAtt IAMStack.Outputs.StackName
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-compute-stack
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Lambda Stack
+  LambdaStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - NetworkStack
+      - IAMStack
+      - ComputeStack
+    Properties:
+      TemplateURL: !If
+        - UseS3Templates
+        - !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}carla-lambda.yaml
+        - !Sub https://s3.${AWS::Region}.amazonaws.com/${ProjectName}-cfn-templates/carla-lambda.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        NetworkStackName: !GetAtt NetworkStack.Outputs.StackName
+        IAMStackName: !GetAtt IAMStack.Outputs.StackName
+        ComputeStackName: !GetAtt ComputeStack.Outputs.StackName
+        LambdaS3Bucket: !Ref LambdaS3Bucket
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-lambda-stack
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Bedrock Agent Stack
+  BedrockAgentStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - IAMStack
+      - LambdaStack
+    Properties:
+      TemplateURL: !If
+        - UseS3Templates
+        - !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}carla-bedrock-agent.yaml
+        - !Sub https://s3.${AWS::Region}.amazonaws.com/${ProjectName}-cfn-templates/carla-bedrock-agent.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        IAMStackName: !GetAtt IAMStack.Outputs.StackName
+        LambdaStackName: !GetAtt LambdaStack.Outputs.StackName
+        AnthropicModel: !Ref AnthropicModel
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-bedrock-stack
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  # Network Outputs
+  VPCId:
+    Description: VPC ID
+    Value: !GetAtt NetworkStack.Outputs.VPCId
+
+  PublicSubnetId:
+    Description: Public Subnet ID
+    Value: !GetAtt NetworkStack.Outputs.PublicSubnetId
+
+  # EC2 Outputs
+  EC2InstanceId:
+    Description: CARLA EC2 Instance ID
+    Value: !GetAtt ComputeStack.Outputs.InstanceId
+
+  EC2PublicIP:
+    Description: CARLA EC2 Public IP
+    Value: !GetAtt ComputeStack.Outputs.PublicIp
+
+  EC2PrivateIP:
+    Description: CARLA EC2 Private IP
+    Value: !GetAtt ComputeStack.Outputs.PrivateIp
+
+  SSHCommand:
+    Description: SSH command to connect to EC2
+    Value: !GetAtt ComputeStack.Outputs.SSHCommand
+
+  # Lambda Outputs
+  LambdaFunctionArn:
+    Description: MCP Bridge Lambda Function ARN
+    Value: !GetAtt LambdaStack.Outputs.LambdaFunctionArn
+
+  # Bedrock Agent Outputs
+  BedrockAgentId:
+    Description: Bedrock Agent ID
+    Value: !GetAtt BedrockAgentStack.Outputs.AgentId
+
+  BedrockAgentAliasId:
+    Description: Bedrock Agent Alias ID
+    Value: !GetAtt BedrockAgentStack.Outputs.AgentAliasId
+
+  BedrockAgentArn:
+    Description: Bedrock Agent ARN
+    Value: !GetAtt BedrockAgentStack.Outputs.AgentArn
+
+  # Usage Instructions
+  QuickStartGuide:
+    Description: Quick start guide
+    Value: !Sub |
+      CARLA-VAD Agent has been deployed successfully!
+
+      1. SSH to EC2 instance:
+         ${ComputeStack.Outputs.SSHCommand}
+
+      2. Set environment variables in .env file:
+         CARLA_AGENT_ID=${BedrockAgentStack.Outputs.AgentId}
+         CARLA_AGENT_ALIAS_ID=${BedrockAgentStack.Outputs.AgentAliasId}
+
+      3. Test with AWS CLI:
+         ${BedrockAgentStack.Outputs.InvocationCommand}
+
+      4. Use with Claude Code CLI:
+         claude -p "Town05マップで60秒のVAD評価を実行してください" \
+           --allowedTools "mcp__remote-orchestrator__invoke_carla_agent"
+
+      For detailed instructions, see cloudformation/README.md

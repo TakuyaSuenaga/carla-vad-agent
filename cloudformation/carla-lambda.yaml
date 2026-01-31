@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CARLA-VAD Agent: Lambda Functions for MCP Bridge'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: carla-vad
+    Description: Project name prefix for resource naming
+
+  NetworkStackName:
+    Type: String
+    Description: Name of the network stack (exports VPC, subnets, security groups)
+    Default: carla-vad-network
+
+  IAMStackName:
+    Type: String
+    Description: Name of the IAM stack (exports Lambda execution role)
+    Default: carla-vad-iam
+
+  ComputeStackName:
+    Type: String
+    Description: Name of the compute stack (exports EC2 private IP)
+    Default: carla-vad-compute
+
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment package
+    Default: ''
+
+  LambdaS3Key:
+    Type: String
+    Description: S3 key for Lambda deployment package
+    Default: lambda-mcp-bridge.zip
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Project Configuration
+        Parameters:
+          - ProjectName
+          - NetworkStackName
+          - IAMStackName
+          - ComputeStackName
+      - Label:
+          default: Lambda Configuration
+        Parameters:
+          - LambdaS3Bucket
+          - LambdaS3Key
+
+Conditions:
+  UseLambdaS3: !Not [!Equals [!Ref LambdaS3Bucket, '']]
+
+Resources:
+  # Lambda Function for MCP Bridge
+  MCPBridgeLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-mcp-bridge
+      Description: Bridge between Bedrock Agent and CARLA EC2 MCP server
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role:
+        Fn::ImportValue: !Sub ${IAMStackName}-LambdaExecutionRoleArn
+      Timeout: 300
+      MemorySize: 512
+      Code: !If
+        - UseLambdaS3
+        - S3Bucket: !Ref LambdaS3Bucket
+          S3Key: !Ref LambdaS3Key
+        - ZipFile: |
+            import json
+            def lambda_handler(event, context):
+                return {
+                    'messageVersion': '1.0',
+                    'response': {
+                        'actionGroup': event.get('actionGroup', ''),
+                        'function': event.get('function', ''),
+                        'functionResponse': {
+                            'responseBody': {
+                                'TEXT': {
+                                    'body': json.dumps({
+                                        'status': 'error',
+                                        'message': 'Lambda deployment package not uploaded. Please build and upload lambda-mcp-bridge.zip'
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+      Environment:
+        Variables:
+          CARLA_EC2_ENDPOINT:
+            Fn::Sub:
+              - http://${PrivateIp}:8000
+              - PrivateIp:
+                  Fn::ImportValue: !Sub ${ComputeStackName}-PrivateIp
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub ${NetworkStackName}-PrivateSubnetId
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub ${NetworkStackName}-LambdaSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-mcp-bridge
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Lambda Permission for Bedrock Agent to invoke
+  BedrockInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MCPBridgeLambda
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # CloudWatch Log Group for Lambda
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-mcp-bridge
+      RetentionInDays: 7
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the MCP Bridge Lambda function
+    Value: !GetAtt MCPBridgeLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaFunctionArn
+
+  LambdaFunctionName:
+    Description: Name of the MCP Bridge Lambda function
+    Value: !Ref MCPBridgeLambda
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaFunctionName
+
+  LogGroupName:
+    Description: CloudWatch Log Group name
+    Value: !Ref LambdaLogGroup

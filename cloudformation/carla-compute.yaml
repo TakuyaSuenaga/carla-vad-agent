@@ -1,0 +1,223 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CARLA-VAD Agent: EC2 Compute Resources'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: carla-vad
+    Description: Project name prefix for resource naming
+
+  NetworkStackName:
+    Type: String
+    Description: Name of the network stack (exports VPC, subnets, security groups)
+    Default: carla-vad-network
+
+  IAMStackName:
+    Type: String
+    Description: Name of the IAM stack (exports instance profile)
+    Default: carla-vad-iam
+
+  InstanceType:
+    Type: String
+    Default: g5.xlarge
+    Description: EC2 instance type (GPU required for CARLA)
+    AllowedValues:
+      - g4dn.xlarge
+      - g4dn.2xlarge
+      - g5.xlarge
+      - g5.2xlarge
+      - g5.4xlarge
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+
+  AmiId:
+    Type: String
+    Description: AMI ID (leave empty to auto-select latest Deep Learning AMI)
+    Default: ''
+
+  RootVolumeSize:
+    Type: Number
+    Default: 100
+    Description: Root volume size in GB
+    MinValue: 50
+    MaxValue: 500
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Project Configuration
+        Parameters:
+          - ProjectName
+          - NetworkStackName
+          - IAMStackName
+      - Label:
+          default: EC2 Configuration
+        Parameters:
+          - InstanceType
+          - KeyName
+          - AmiId
+          - RootVolumeSize
+
+Conditions:
+  UseLatestAmi: !Equals [!Ref AmiId, '']
+
+Resources:
+  # SSM Parameter to get latest Deep Learning AMI
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Condition: UseLatestAmi
+    Properties:
+      # This uses a Systems Manager parameter that AWS maintains with the latest Deep Learning AMI
+      # Note: This specific parameter path may need adjustment based on region/availability
+      Default: /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+
+  # EC2 Instance for CARLA Agent Core
+  CarlaEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !If
+        - UseLatestAmi
+        - !Ref LatestAmiId
+        - !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      IamInstanceProfile:
+        Fn::ImportValue: !Sub ${IAMStackName}-EC2InstanceProfileName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          SubnetId:
+            Fn::ImportValue: !Sub ${NetworkStackName}-PublicSubnetId
+          GroupSet:
+            - Fn::ImportValue: !Sub ${NetworkStackName}-CarlaEC2SecurityGroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref RootVolumeSize
+            VolumeType: gp3
+            Iops: 3000
+            Throughput: 125
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Update system
+          apt-get update
+          apt-get upgrade -y
+
+          # Install Docker if not present
+          if ! command -v docker &> /dev/null; then
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sh get-docker.sh
+            usermod -aG docker ubuntu
+          fi
+
+          # Install NVIDIA Docker runtime if not present
+          if ! command -v nvidia-docker &> /dev/null; then
+            distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+            curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | apt-key add -
+            curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | \
+              tee /etc/apt/sources.list.d/nvidia-docker.list
+            apt-get update
+            apt-get install -y nvidia-docker2
+            systemctl restart docker
+          fi
+
+          # Install Python dependencies
+          apt-get install -y python3-pip python3-venv git
+
+          # Create working directory
+          mkdir -p /opt/carla-vad-agent
+          cd /opt/carla-vad-agent
+
+          # Clone repository (adjust URL as needed)
+          # git clone https://github.com/YOUR_USERNAME/carla-vad-agent.git .
+
+          # Install Python packages for MCP server
+          pip3 install mcp boto3 carla aiohttp
+
+          # Create systemd service for CARLA Agent Core
+          cat > /etc/systemd/system/carla-agentcore.service <<'EOF'
+          [Unit]
+          Description=CARLA Agent Core Service
+          After=docker.service
+          Requires=docker.service
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/carla-vad-agent
+          ExecStart=/usr/bin/docker-compose -f docker/docker-compose.yml up
+          ExecStop=/usr/bin/docker-compose -f docker/docker-compose.yml down
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          # Signal CloudFormation that initialization is complete
+          apt-get install -y python3-pip
+          pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+
+          /usr/local/bin/cfn-signal -e $? --stack ${AWS::StackName} \
+            --resource CarlaEC2Instance --region ${AWS::Region}
+
+          echo "CARLA Agent Core EC2 initialization completed"
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-ec2
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Component
+          Value: compute
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+        Count: 1
+
+  # Elastic IP for stable public address
+  CarlaEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref CarlaEC2Instance
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-eip
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref CarlaEC2Instance
+    Export:
+      Name: !Sub ${AWS::StackName}-InstanceId
+
+  PublicIp:
+    Description: Public IP address
+    Value: !Ref CarlaEIP
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicIp
+
+  PrivateIp:
+    Description: Private IP address
+    Value: !GetAtt CarlaEC2Instance.PrivateIp
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateIp
+
+  PublicDnsName:
+    Description: Public DNS name
+    Value: !GetAtt CarlaEC2Instance.PublicDnsName
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicDnsName
+
+  SSHCommand:
+    Description: SSH command to connect to the instance
+    Value: !Sub ssh -i ${KeyName}.pem ubuntu@${CarlaEIP}

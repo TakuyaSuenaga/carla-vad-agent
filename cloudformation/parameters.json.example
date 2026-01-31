@@ -1,0 +1,38 @@
+[
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "carla-vad"
+  },
+  {
+    "ParameterKey": "VpcCidr",
+    "ParameterValue": "10.0.0.0/16"
+  },
+  {
+    "ParameterKey": "AllowedSshCidr",
+    "ParameterValue": "0.0.0.0/0"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "g5.xlarge"
+  },
+  {
+    "ParameterKey": "KeyName",
+    "ParameterValue": "your-ec2-key-pair-name"
+  },
+  {
+    "ParameterKey": "AnthropicModel",
+    "ParameterValue": "anthropic.claude-sonnet-4-5-v2:0"
+  },
+  {
+    "ParameterKey": "TemplateS3Bucket",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "TemplateS3Prefix",
+    "ParameterValue": "cloudformation/"
+  },
+  {
+    "ParameterKey": "LambdaS3Bucket",
+    "ParameterValue": ""
+  }
+]

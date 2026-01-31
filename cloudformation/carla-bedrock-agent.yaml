@@ -1,0 +1,300 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CARLA-VAD Agent: Bedrock Agent Configuration'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: carla-vad
+    Description: Project name prefix for resource naming
+
+  IAMStackName:
+    Type: String
+    Description: Name of the IAM stack (exports Bedrock Agent role)
+    Default: carla-vad-iam
+
+  LambdaStackName:
+    Type: String
+    Description: Name of the Lambda stack (exports Lambda function ARN)
+    Default: carla-vad-lambda
+
+  AgentName:
+    Type: String
+    Default: carla-vad-agent
+    Description: Name of the Bedrock Agent
+
+  AnthropicModel:
+    Type: String
+    Default: anthropic.claude-sonnet-4-5-v2:0
+    Description: Anthropic model ID for Bedrock
+    AllowedValues:
+      - anthropic.claude-sonnet-4-5-v2:0
+      - anthropic.claude-sonnet-3-5-v2:0
+      - anthropic.claude-opus-4-5-v1:0
+
+  IdleSessionTTLInSeconds:
+    Type: Number
+    Default: 28800
+    Description: Session timeout in seconds (default 8 hours)
+    MinValue: 60
+    MaxValue: 28800
+
+  OpenAPISchemaS3Bucket:
+    Type: String
+    Description: S3 bucket containing OpenAPI schema (leave empty to use inline schema)
+    Default: ''
+
+  OpenAPISchemaS3Key:
+    Type: String
+    Description: S3 key for OpenAPI schema file
+    Default: carla-openapi-schema.json
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Project Configuration
+        Parameters:
+          - ProjectName
+          - IAMStackName
+          - LambdaStackName
+      - Label:
+          default: Bedrock Agent Configuration
+        Parameters:
+          - AgentName
+          - AnthropicModel
+          - IdleSessionTTLInSeconds
+      - Label:
+          default: OpenAPI Schema Configuration
+        Parameters:
+          - OpenAPISchemaS3Bucket
+          - OpenAPISchemaS3Key
+
+Conditions:
+  UseS3Schema: !Not [!Equals [!Ref OpenAPISchemaS3Bucket, '']]
+
+Resources:
+  # Bedrock Agent
+  CarlaAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: !Ref AgentName
+      AgentResourceRoleArn:
+        Fn::ImportValue: !Sub ${IAMStackName}-BedrockAgentRoleArn
+      FoundationModel: !Ref AnthropicModel
+      Description: CARLA simulator and VAD control agent
+      Instruction: |
+        あなたはCARLAシミュレーターとVAD（Vectorized Autonomous Driving）を制御する
+        専門エージェントです。以下のツールを使用してシミュレーションを実行します：
+
+        - start_carla_scenario: シミュレーション環境の初期化
+          - マップ名、天候、トラフィック車両数、歩行者数を指定
+        - run_vad_inference: VAD推論の実行
+          - 実行時間、結果の保存設定を指定
+          - FPS、Planning L2エラー、衝突率などのメトリクスを取得
+        - get_simulation_metrics: 現在の状態確認
+          - アクター数、フレーム番号、マップ情報などを取得
+        - stop_scenario: クリーンアップ
+          - すべてのアクターを削除し、リソースを解放
+
+        ユーザーからの指示に基づいて、適切な順序でツールを呼び出し、
+        結果を分析してレポートを作成してください。
+
+        シミュレーション実行の基本フロー：
+        1. start_carla_scenario でシミュレーション環境を初期化
+        2. run_vad_inference でVAD推論を実行
+        3. get_simulation_metrics で結果を確認
+        4. stop_scenario でクリーンアップ
+
+        結果レポートには以下を含めてください：
+        - シミュレーション設定（マップ、天候、車両数など）
+        - VADメトリクス（FPS、Planning L2エラー、衝突率）
+        - 発生した問題や注意点
+        - 次のステップの推奨事項
+      IdleSessionTTLInSeconds: !Ref IdleSessionTTLInSeconds
+
+  # Action Group for CARLA control
+  CarlaActionGroup:
+    Type: AWS::Bedrock::AgentActionGroup
+    Properties:
+      AgentId: !GetAtt CarlaAgent.AgentId
+      AgentVersion: DRAFT
+      ActionGroupName: carla-control
+      Description: Action group for CARLA simulator and VAD control
+      ActionGroupExecutor:
+        Lambda:
+          Fn::ImportValue: !Sub ${LambdaStackName}-LambdaFunctionArn
+      ApiSchema: !If
+        - UseS3Schema
+        - S3:
+            S3BucketName: !Ref OpenAPISchemaS3Bucket
+            S3ObjectKey: !Ref OpenAPISchemaS3Key
+        - Payload: |
+            {
+              "openapi": "3.0.0",
+              "info": {
+                "title": "CARLA VAD Control API",
+                "version": "1.0.0"
+              },
+              "paths": {
+                "/start_carla_scenario": {
+                  "post": {
+                    "summary": "Start CARLA simulation scenario",
+                    "operationId": "startCarlaScenario",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "map_name": {"type": "string", "default": "Town05"},
+                              "weather": {"type": "string", "default": "ClearNoon"},
+                              "num_vehicles": {"type": "integer", "default": 50},
+                              "num_pedestrians": {"type": "integer", "default": 30}
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": {"200": {"description": "Success"}}
+                  }
+                },
+                "/run_vad_inference": {
+                  "post": {
+                    "summary": "Run VAD inference",
+                    "operationId": "runVadInference",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "duration_seconds": {"type": "integer", "default": 10},
+                              "save_results": {"type": "boolean", "default": true},
+                              "output_path": {"type": "string", "default": "/tmp/vad_results.json"}
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": {"200": {"description": "Success"}}
+                  }
+                },
+                "/get_simulation_metrics": {
+                  "get": {
+                    "summary": "Get simulation metrics",
+                    "operationId": "getSimulationMetrics",
+                    "responses": {"200": {"description": "Success"}}
+                  }
+                },
+                "/stop_scenario": {
+                  "post": {
+                    "summary": "Stop simulation scenario",
+                    "operationId": "stopScenario",
+                    "responses": {"200": {"description": "Success"}}
+                  }
+                }
+              }
+            }
+      ActionGroupState: ENABLED
+
+  # Agent Alias (DRAFT version)
+  CarlaAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentId: !GetAtt CarlaAgent.AgentId
+      AgentAliasName: production
+      Description: Production alias for CARLA Agent
+
+  # Prepare Agent (required step before using the agent)
+  PrepareAgent:
+    Type: Custom::PrepareAgent
+    DependsOn:
+      - CarlaAgent
+      - CarlaActionGroup
+    Properties:
+      ServiceToken: !GetAtt PrepareAgentLambda.Arn
+      AgentId: !GetAtt CarlaAgent.AgentId
+
+  # Lambda function to prepare the agent
+  PrepareAgentLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-prepare-agent
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub ${IAMStackName}-LambdaExecutionRoleArn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          bedrock = boto3.client('bedrock-agent')
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      agent_id = event['ResourceProperties']['AgentId']
+                      response = bedrock.prepare_agent(agentId=agent_id)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'AgentId': agent_id,
+                          'PreparedAt': response['preparedAt'].isoformat()
+                      })
+                  else:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  # Additional IAM policy for PrepareAgent Lambda
+  PrepareAgentPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${ProjectName}-prepare-agent-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - bedrock:PrepareAgent
+              - bedrock:GetAgent
+            Resource: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*
+      Roles:
+        - Fn::ImportValue: !Sub ${IAMStackName}-LambdaExecutionRoleArn
+
+Outputs:
+  AgentId:
+    Description: Bedrock Agent ID
+    Value: !GetAtt CarlaAgent.AgentId
+    Export:
+      Name: !Sub ${AWS::StackName}-AgentId
+
+  AgentAliasId:
+    Description: Bedrock Agent Alias ID
+    Value: !GetAtt CarlaAgentAlias.AgentAliasId
+    Export:
+      Name: !Sub ${AWS::StackName}-AgentAliasId
+
+  AgentArn:
+    Description: Bedrock Agent ARN
+    Value: !GetAtt CarlaAgent.AgentArn
+    Export:
+      Name: !Sub ${AWS::StackName}-AgentArn
+
+  AgentName:
+    Description: Bedrock Agent Name
+    Value: !Ref AgentName
+
+  InvocationCommand:
+    Description: Example AWS CLI command to invoke the agent
+    Value: !Sub |
+      aws bedrock-agent-runtime invoke-agent \
+        --agent-id ${CarlaAgent.AgentId} \
+        --agent-alias-id ${CarlaAgentAlias.AgentAliasId} \
+        --session-id my-session \
+        --input-text "Town05マップで60秒のVAD評価を実行してください" \
+        --region ${AWS::Region} \
+        output.txt

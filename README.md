@@ -63,7 +63,23 @@ cp .mcp.json.example ~/.claude/.mcp.json
 # エディタで ~/.claude/.mcp.json を編集し、実際のトークン値を設定
 ```
 
-### 3. EC2インスタンスのセットアップ
+### 3. インフラのデプロイ
+
+#### オプションA: CloudFormation（推奨）
+
+```bash
+# CloudFormationで環境構築
+cd cloudformation
+cp parameters.json.example parameters.json
+# parameters.json を編集して KeyName などを設定
+
+# デプロイ
+./deploy.sh
+```
+
+詳細は [cloudformation/README.md](cloudformation/README.md) を参照。
+
+#### オプションB: Terraform
 
 ```bash
 # Terraformで環境構築
@@ -73,10 +89,10 @@ terraform plan
 terraform apply
 ```
 
-または、手動セットアップ:
+#### オプションC: 手動セットアップ
 
 ```bash
-# EC2にSSH接続後
+# EC2インスタンスを手動作成後、SSH接続して実行
 ./scripts/setup_ec2.sh
 ```
 
@@ -163,6 +179,26 @@ carla-vad-agent/
 ├── README.md                       # このファイル
 ├── .gitignore                      # Git無視設定
 ├── .mcp.json.example              # MCP設定テンプレート
+├── cloudformation/                 # CloudFormation テンプレート（推奨）
+│   ├── README.md                  # CloudFormation デプロイガイド
+│   ├── carla-master.yaml          # マスタースタック
+│   ├── carla-network.yaml         # VPC・ネットワーク
+│   ├── carla-iam.yaml             # IAMロール・ポリシー
+│   ├── carla-compute.yaml         # EC2インスタンス
+│   ├── carla-lambda.yaml          # Lambda関数
+│   ├── carla-bedrock-agent.yaml   # Bedrock Agent
+│   ├── carla-openapi-schema.json  # OpenAPIスキーマ
+│   ├── parameters.json.example    # パラメータテンプレート
+│   ├── deploy.sh                  # デプロイスクリプト
+│   ├── delete.sh                  # 削除スクリプト
+│   └── lambda-code/               # Lambda関数コード
+│       ├── index.py
+│       ├── requirements.txt
+│       └── build.sh
+├── terraform/                      # Terraform (代替オプション)
+│   ├── carla_agentcore.tf         # インフラ定義
+│   ├── variables.tf
+│   └── outputs.tf
 ├── docker/
 │   ├── Dockerfile.carla-agentcore # CARLA Agent CoreのDockerfile
 │   └── docker-compose.yml         # Docker Compose設定
@@ -176,10 +212,6 @@ carla-vad-agent/
 ├── agent-core/
 │   ├── start_agentcore.py         # Agent Core起動スクリプト
 │   └── requirements.txt
-├── terraform/
-│   ├── carla_agentcore.tf         # インフラ定義
-│   ├── variables.tf
-│   └── outputs.tf
 ├── github-actions/
 │   └── carla_evaluation.yml       # GitHub Actionsワークフロー
 └── scripts/

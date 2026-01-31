@@ -1,0 +1,236 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "CARLA VAD Control API",
+    "version": "1.0.0",
+    "description": "API for controlling CARLA simulator and VAD inference"
+  },
+  "paths": {
+    "/start_carla_scenario": {
+      "post": {
+        "summary": "Start CARLA simulation scenario",
+        "description": "Initialize and start a CARLA simulation scenario with specified parameters",
+        "operationId": "startCarlaScenario",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "map_name": {
+                    "type": "string",
+                    "description": "CARLA map name",
+                    "enum": ["Town01", "Town02", "Town03", "Town04", "Town05", "Town06", "Town07", "Town10HD", "Town11", "Town12"],
+                    "default": "Town05"
+                  },
+                  "weather": {
+                    "type": "string",
+                    "description": "Weather preset",
+                    "enum": ["ClearNoon", "CloudyNoon", "WetNoon", "WetCloudyNoon", "MidRainyNoon", "HardRainNoon", "SoftRainNoon", "ClearSunset", "CloudySunset"],
+                    "default": "ClearNoon"
+                  },
+                  "num_vehicles": {
+                    "type": "integer",
+                    "description": "Number of traffic vehicles to spawn",
+                    "default": 50,
+                    "minimum": 0,
+                    "maximum": 200
+                  },
+                  "num_pedestrians": {
+                    "type": "integer",
+                    "description": "Number of pedestrians to spawn",
+                    "default": 30,
+                    "minimum": 0,
+                    "maximum": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scenario started successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/run_vad_inference": {
+      "post": {
+        "summary": "Run VAD inference",
+        "description": "Execute VAD (Vectorized Autonomous Driving) inference for specified duration",
+        "operationId": "runVadInference",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "duration_seconds": {
+                    "type": "integer",
+                    "description": "Inference duration in seconds",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 300
+                  },
+                  "save_results": {
+                    "type": "boolean",
+                    "description": "Whether to save results to file",
+                    "default": true
+                  },
+                  "output_path": {
+                    "type": "string",
+                    "description": "Path to save results",
+                    "default": "/tmp/vad_results.json"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "VAD inference completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VADResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/get_simulation_metrics": {
+      "get": {
+        "summary": "Get simulation metrics",
+        "description": "Retrieve current simulation state and metrics",
+        "operationId": "getSimulationMetrics",
+        "responses": {
+          "200": {
+            "description": "Metrics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stop_scenario": {
+      "post": {
+        "summary": "Stop simulation scenario",
+        "description": "Stop the running simulation and clean up resources",
+        "operationId": "stopScenario",
+        "responses": {
+          "200": {
+            "description": "Scenario stopped successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ScenarioResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "map": {
+            "type": "string"
+          },
+          "weather": {
+            "type": "string"
+          },
+          "spawned_vehicles": {
+            "type": "integer"
+          },
+          "spawned_pedestrians": {
+            "type": "integer"
+          }
+        }
+      },
+      "VADResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "integer"
+          },
+          "metrics": {
+            "type": "object",
+            "properties": {
+              "fps": {
+                "type": "number"
+              },
+              "planning_l2_error": {
+                "type": "number"
+              },
+              "collision_rate": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "MetricsResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "total_actors": {
+            "type": "integer"
+          },
+          "vehicles": {
+            "type": "integer"
+          },
+          "pedestrians": {
+            "type": "integer"
+          },
+          "frame": {
+            "type": "integer"
+          }
+        }
+      },
+      "StopResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "destroyed_actors": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}
