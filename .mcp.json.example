@@ -1,12 +1,5 @@
 {
   "mcpServers": {
-    "github": {
-      "type": "http",
-      "url": "https://api.githubcopilot.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${GITHUB_TOKEN}"
-      }
-    },
     "remote-orchestrator": {
       "type": "streamable-http",
       "url": "${REMOTE_MCP_URL}",
@@ -24,3 +17,18 @@
     }
   }
 }
+
+<!-- 
+GitHub MCP設定は以下のコマンドで追加してください：
+
+claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp","headers":{"Authorization":"Bearer '"$(grep GITHUB_PAT .env | cut -d '=' -f2)"'"}}'
+
+または、手動で追加する場合は以下を mcpServers に追加：
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_ACTUAL_GITHUB_PAT_HERE"
+      }
+    }
+-->

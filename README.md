@@ -41,7 +41,7 @@ Claude Code CLI / GitHub Actions
 ### 1. 環境変数の設定
 
 ```bash
-export GITHUB_TOKEN="your_github_token_here"
+export GITHUB_PAT="your_github_pat_here"
 export ANTHROPIC_API_KEY="your_anthropic_api_key"
 export AWS_REGION="us-east-1"
 export CARLA_AGENT_ID="your_bedrock_agent_id"
@@ -51,11 +51,16 @@ export CARLA_AGENT_ALIAS_ID="your_agent_alias_id"
 ### 2. MCP設定ファイルのセットアップ
 
 ```bash
-# .mcp.json をホームディレクトリにコピー
-cp .mcp.json.example ~/.claude/.mcp.json
+# .env ファイルを作成
+cp .env.example .env
+# エディタで .env を編集し、GITHUB_PAT などの実際の値を設定
 
-# 環境変数を置換
-envsubst < .mcp.json.example > ~/.claude/.mcp.json
+# GitHub MCP サーバーを追加
+claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp","headers":{"Authorization":"Bearer '"$(grep GITHUB_PAT .env | cut -d '=' -f2)"'"}}'
+
+# または、手動で設定する場合
+cp .mcp.json.example ~/.claude/.mcp.json
+# エディタで ~/.claude/.mcp.json を編集し、実際のトークン値を設定
 ```
 
 ### 3. EC2インスタンスのセットアップ

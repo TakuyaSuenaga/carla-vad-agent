@@ -40,22 +40,25 @@ carla-vad-agent/
 
 `.mcp.json.example`に以下の設定を追加しました：
 
+GitHub MCPは以下のコマンドで追加します：
+```bash
+claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp","headers":{"Authorization":"Bearer '"$(grep GITHUB_PAT .env | cut -d '=' -f2)"'"}}'
+```
+
+または、手動で設定する場合：
 ```json
 {
-  "mcpServers": {
-    "github": {
-      "type": "http",
-      "url": "https://api.githubcopilot.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${GITHUB_TOKEN}"
-      }
+  "github": {
+    "type": "http",
+    "url": "https://api.githubcopilot.com/mcp",
+    "headers": {
+      "Authorization": "Bearer YOUR_ACTUAL_GITHUB_PAT_HERE"
     }
   }
 }
 ```
 
-**重要**: セキュリティのため、トークンは環境変数 `${GITHUB_TOKEN}` として参照しています。
-実際の使用時は `.env` ファイルで設定してください。
+**重要**: セキュリティのため、トークンは `.env` ファイルの `GITHUB_PAT` として管理し、実際の値を展開して使用します。
 
 ### 3. Bedrock AgentCore統合アーキテクチャ
 
@@ -132,7 +135,7 @@ cp .env.example .env
 - `CARLA_AGENT_ID`
 - `CARLA_AGENT_ALIAS_ID`
 - `ANTHROPIC_API_KEY`
-- `GITHUB_TOKEN` (GitHub MCP用)
+- `GITHUB_PAT` (GitHub MCP用)
 - `REMOTE_MCP_URL`
 - `MCP_API_TOKEN`
 
@@ -140,12 +143,14 @@ cp .env.example .env
 
 リポジトリの Settings → Secrets → Actions で以下を追加:
 - `ANTHROPIC_API_KEY`
-- `GITHUB_TOKEN`
+- `GITHUB_TOKEN` (GitHub Actionsが自動提供するため通常は不要)
 - `AWS_REGION`
 - `CARLA_AGENT_ID`
 - `CARLA_AGENT_ALIAS_ID`
 - `REMOTE_MCP_URL`
 - `MCP_API_TOKEN`
+
+**注**: ローカルでのClaude Code CLI使用時は `.env` の `GITHUB_PAT` を使用します。
 
 ### 4. AWS インフラのデプロイ
 
@@ -169,11 +174,16 @@ EC2_IP=$(terraform output -raw ec2_public_ip)
 ### 6. Claude Code CLIからの使用
 
 ```bash
-# .mcp.json を ~/.claude/ にコピー
-cp .mcp.json.example ~/.claude/.mcp.json
+# .env ファイルを作成
+cp .env.example .env
+# エディタで .env を編集
 
-# 環境変数を展開
-envsubst < .mcp.json.example > ~/.claude/.mcp.json
+# GitHub MCP サーバーを追加
+claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp","headers":{"Authorization":"Bearer '"$(grep GITHUB_PAT .env | cut -d '=' -f2)"'"}}'
+
+# リモートオーケストレーターの設定（必要に応じて）
+cp .mcp.json.example ~/.claude/.mcp.json
+# エディタで ~/.claude/.mcp.json を編集
 
 # 使用例
 claude -p "invoke_carla_agent ツールを使用して、Town05マップで60秒のVAD評価を実行してください" \
