@@ -33,7 +33,28 @@ Claude Code CLI / GitHub Actions
 
 ## クイックスタート
 
-### 前提条件
+### 🔄 既存CARLA+VAD環境がある場合
+
+**既にGPU EC2インスタンスにCARLAとVADをセットアップ済みの場合**、以下のスクリプトで簡単にAgent Core化できます：
+
+```bash
+# EC2インスタンス上で実行
+bash scripts/setup_existing_carla.sh
+
+# 環境検証
+bash scripts/validate_environment.sh
+
+# AWS設定（ローカルマシンで実行）
+bash scripts/configure_aws.sh
+```
+
+詳細は **[scripts/EXISTING_ENVIRONMENT.md](scripts/EXISTING_ENVIRONMENT.md)** を参照してください。
+
+---
+
+### 🆕 新規セットアップの場合
+
+#### 前提条件
 - AWS アカウント (Bedrock AgentCore 有効化済み)
 - GitHub Personal Access Token
 - Claude Code CLI インストール済み
